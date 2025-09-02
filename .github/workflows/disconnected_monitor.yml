@@ -1,35 +1,52 @@
 name: Smartlead Disconnected Monitor
 
 on:
+  # GitHub cron is UTC. Two crons emulate a 90 minute cadence:
+  # 00:00, 01:30, 03:00, 04:30, 06:00, 07:30, 09:00, 10:30,
+  # 12:00, 13:30, 15:00, 16:30, 18:00, 19:30, 21:00, 22:30 UTC.
   schedule:
-    # Run every hour
-    - cron: "0 * * * *"
-  workflow_dispatch:  # allow manual trigger too
+    - cron: "0 */3 * * *"
+    - cron: "30 1-23/3 * * *"
+  workflow_dispatch:
 
 jobs:
-  monitor:
+  run-monitor:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: smartlead-disconnect-monitor
+      cancel-in-progress: true
+
+    env:
+      # Secrets configured in GitHub repo settings
+      SMARTLEAD_BEARER_TOKEN: ${{ secrets.SMARTLEAD_BEARER_TOKEN }}
+      SUPABASE_DSN:           ${{ secrets.SUPABASE_DSN }}
+      SLACK_BOT_TOKEN:        ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL_ID:       ${{ secrets.SLACK_CHANNEL_ID }}
+      SMARTLEAD_BASE:         ${{ secrets.SMARTLEAD_BASE }}
+
+      # Adjust if your script lives elsewhere
+      SCRIPT_PATH: smartlead_disconnected_monitor.py
+
     steps:
-      - name: Checkout repo
+      - name: Check out repo
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install requests psycopg2-binary slack_sdk python-dotenv
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            # Use psycopg2-binary to avoid system libpq build issues on runners
+            pip install requests psycopg2-binary slack_sdk python-dotenv
+          fi
 
-      - name: Run Smartlead Monitor
-        env:
-          SMARTLEAD_BEARER_TOKEN: ${{ secrets.SMARTLEAD_BEARER_TOKEN }}
-          SUPABASE_DSN: ${{ secrets.SUPABASE_DSN }}
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }} # fallback/general
-          SMARTLEAD_BASE: ${{ secrets.SMARTLEAD_BASE }} # optional, defaults to https://server.smartlead.ai
-        run: |
-          python smartlead_disconnected_monitor.py
+      - name: Run monitor
+        run: python "$SCRIPT_PATH"
