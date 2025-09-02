@@ -100,6 +100,7 @@ CHANNEL_MAP = {
     "ENDY": "C092TPDUW4A",
     "SCALEDMAIL": "C07TWN63F4P",
     "CHEAPINBOXES": "C092677AKS4",
+    "WINNR": "C093HJE30R1",
     "DEFAULT": "C09DKRUHSAD",    
     # Add more as needed
 }
@@ -124,10 +125,11 @@ def classify_group(account: Dict[str, Any]) -> str:
     # CHEAPINBOXES
     elif any("CI" in t for t in tags):
         return "CHEAPINBOXES"
+    # WINNR
+    elif any("WI" in t for t in tags):
+    return "WINNR"
     else:
         return "DEFAULT"
-
-
 
 
 # ============ DB LOGIC ============
