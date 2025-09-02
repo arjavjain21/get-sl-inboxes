@@ -47,20 +47,34 @@ def fetch_disconnected(session: requests.Session) -> List[Dict[str, Any]]:
 
     while True:
         params = {"offset": offset, "limit": limit, "isImapSuccess": "false", "isSmtpSuccess": "false"}
-        resp = session.get(DISCONNECTED_ENDPOINT, headers=headers, params=params, timeout=30)
-        if resp.status_code == 429:
-            time.sleep(2)
-            continue
-        resp.raise_for_status()
+
+        for attempt in range(3):  # retry up to 3 times
+            try:
+                resp = session.get(DISCONNECTED_ENDPOINT, headers=headers, params=params, timeout=30)
+                if resp.status_code >= 500:
+                    logging.warning(f"Server error {resp.status_code}, retry {attempt+1}/3 ...")
+                    time.sleep(2 ** attempt)
+                    continue
+                resp.raise_for_status()
+                break
+            except requests.RequestException as e:
+                if attempt == 2:
+                    raise
+                logging.warning(f"Request failed {e}, retrying ...")
+                time.sleep(2 ** attempt)
+
         data = resp.json()
         items = data.get("data", {}).get("email_accounts", []) or []
         out.extend(items)
         logging.info(f"Fetched {len(items)} disconnected accounts at offset {offset}")
+
         if len(items) < limit:
             break
         offset += limit
         time.sleep(PAUSE_SEC)
+
     return out
+
 
 def normalize(item: Dict[str, Any]) -> Dict[str, Any]:
     tags = []
