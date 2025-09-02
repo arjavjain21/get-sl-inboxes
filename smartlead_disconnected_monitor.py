@@ -127,7 +127,7 @@ def classify_group(account: Dict[str, Any]) -> str:
         return "CHEAPINBOXES"
     # WINNR
     elif any("WI" in t for t in tags):
-    return "WINNR"
+        return "WINNR"
     else:
         return "DEFAULT"
 
