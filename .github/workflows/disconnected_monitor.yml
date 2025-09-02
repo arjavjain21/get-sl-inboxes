@@ -1,0 +1,35 @@
+name: Smartlead Disconnected Monitor
+
+on:
+  schedule:
+    # Run every hour
+    - cron: "0 * * * *"
+  workflow_dispatch:  # allow manual trigger too
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install requests psycopg2-binary slack_sdk python-dotenv
+
+      - name: Run Smartlead Monitor
+        env:
+          SMARTLEAD_BEARER_TOKEN: ${{ secrets.SMARTLEAD_BEARER_TOKEN }}
+          SUPABASE_DSN: ${{ secrets.SUPABASE_DSN }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }} # fallback/general
+          SMARTLEAD_BASE: ${{ secrets.SMARTLEAD_BASE }} # optional, defaults to https://server.smartlead.ai
+        run: |
+          python smartlead_disconnected_monitor.py
