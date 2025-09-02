@@ -40,40 +40,32 @@ def db_conn():
 
 # ============ API FETCH ============
 def fetch_disconnected(session: requests.Session) -> List[Dict[str, Any]]:
-    out = []
-    offset = 0
-    limit = REQUEST_LIMIT_PER_PAGE
-    headers = {"Authorization": f"Bearer {SMARTLEAD_BEARER}", "Accept": "application/json"}
-
-    while True:
-        params = {"offset": offset, "limit": limit, "isImapSuccess": "false", "isSmtpSuccess": "false"}
-
-        for attempt in range(3):  # retry up to 3 times
-            try:
-                resp = session.get(DISCONNECTED_ENDPOINT, headers=headers, params=params, timeout=30)
-                if resp.status_code >= 500:
-                    logging.warning(f"Server error {resp.status_code}, retry {attempt+1}/3 ...")
-                    time.sleep(2 ** attempt)
-                    continue
-                resp.raise_for_status()
+    def fetch_with_filter(params):
+        out, offset, limit = [], 0, REQUEST_LIMIT_PER_PAGE
+        headers = {"Authorization": f"Bearer {SMARTLEAD_BEARER}", "Accept": "application/json"}
+        while True:
+            q = {"offset": offset, "limit": limit, **params}
+            resp = session.get(DISCONNECTED_ENDPOINT, headers=headers, params=q, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("data", {}).get("email_accounts", []) or []
+            out.extend(items)
+            logging.info(f"Fetched {len(items)} accounts at offset {offset} with {params}")
+            if len(items) < limit:
                 break
-            except requests.RequestException as e:
-                if attempt == 2:
-                    raise
-                logging.warning(f"Request failed {e}, retrying ...")
-                time.sleep(2 ** attempt)
+            offset += limit
+            time.sleep(PAUSE_SEC)
+        return out
 
-        data = resp.json()
-        items = data.get("data", {}).get("email_accounts", []) or []
-        out.extend(items)
-        logging.info(f"Fetched {len(items)} disconnected accounts at offset {offset}")
+    # Fetch SMTP-only, IMAP-only, and both
+    smtp = fetch_with_filter({"isSmtpSuccess": "false"})
+    imap = fetch_with_filter({"isImapSuccess": "false"})
+    both = [acc for acc in smtp if acc in imap]  # intersection if needed
 
-        if len(items) < limit:
-            break
-        offset += limit
-        time.sleep(PAUSE_SEC)
+    # De-duplicate by id
+    merged = {int(acc["id"]): acc for acc in smtp + imap}.values()
+    return list(merged)
 
-    return out
 
 
 def normalize(item: Dict[str, Any]) -> Dict[str, Any]:
