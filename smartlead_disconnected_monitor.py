@@ -106,10 +106,11 @@ CHANNEL_MAP = {
 
 def classify_group(account: Dict[str, Any]) -> str:
     """
-    Classify account into groups based on tags.
+    Classify account into groups based on tags (stored as comma-separated string).
     If a tag *contains* a keyword, map it to the group.
     """
-    tags = [t.upper() for t in account.get("tags", [])]
+    raw_tags = account.get("tags") or ""
+    tags = [t.strip().upper() for t in raw_tags.split(",") if t.strip()]
 
     # VOLTIC
     if any("VO" in t for t in tags):
@@ -125,6 +126,7 @@ def classify_group(account: Dict[str, Any]) -> str:
         return "CHEAPINBOXES"
     else:
         return "DEFAULT"
+
 
 
 
