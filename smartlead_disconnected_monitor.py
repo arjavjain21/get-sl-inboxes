@@ -40,33 +40,27 @@ def db_conn():
 
 # ============ API FETCH ============
 def fetch_disconnected(session: requests.Session) -> List[Dict[str, Any]]:
-    def fetch_with_filter(params):
-        out, offset, limit = [], 0, REQUEST_LIMIT_PER_PAGE
-        headers = {"Authorization": f"Bearer {SMARTLEAD_BEARER}", "Accept": "application/json"}
-        while True:
-            q = {"offset": offset, "limit": limit, **params}
-            resp = session.get(DISCONNECTED_ENDPOINT, headers=headers, params=q, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            items = data.get("data", {}).get("email_accounts", []) or []
-            out.extend(items)
-            logging.info(f"Fetched {len(items)} accounts at offset {offset} with {params}")
-            if len(items) < limit:
-                break
-            offset += limit
-            time.sleep(PAUSE_SEC)
-        return out
+    out = []
+    offset = 0
+    limit = REQUEST_LIMIT_PER_PAGE
+    headers = {"Authorization": f"Bearer {SMARTLEAD_BEARER}", "Accept": "application/json"}
 
-    # Fetch SMTP-only, IMAP-only, and both
-    smtp = fetch_with_filter({"isSmtpSuccess": "false"})
-    imap = fetch_with_filter({"isImapSuccess": "false"})
-    both = [acc for acc in smtp if acc in imap]  # intersection if needed
-
-    # De-duplicate by id
-    merged = {int(acc["id"]): acc for acc in smtp + imap}.values()
-    return list(merged)
-
-
+    while True:
+        params = {"offset": offset, "limit": limit, "isImapSuccess": "false", "isSmtpSuccess": "false"}
+        resp = session.get(DISCONNECTED_ENDPOINT, headers=headers, params=params, timeout=30)
+        if resp.status_code == 429:
+            time.sleep(2)
+            continue
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("data", {}).get("email_accounts", []) or []
+        out.extend(items)
+        logging.info(f"Fetched {len(items)} disconnected accounts at offset {offset}")
+        if len(items) < limit:
+            break
+        offset += limit
+        time.sleep(PAUSE_SEC)
+    return out
 
 def normalize(item: Dict[str, Any]) -> Dict[str, Any]:
     tags = []
@@ -102,11 +96,11 @@ def normalize(item: Dict[str, Any]) -> Dict[str, Any]:
 # ===================== GROUP CONFIG =====================
 # Map group names to Slack channel IDs
 CHANNEL_MAP = {
-    "VOLTIC": "C09BJDZBU9E",
-    "ENDY": "C01XXXXXXX2",
-    "SCALEDMAIL": "C01XXXXXXX3",
-    "CHEAPINBOXES": "C01XXXXXXX4",
-    "DEFAULT": "C029111B6DT",    
+    "VOLTIC": "C0943S4LSGJ",
+    "ENDY": "C092TPDUW4A",
+    "SCALEDMAIL": "C07TWN63F4P",
+    "CHEAPINBOXES": "C092677AKS4",
+    "DEFAULT": "C09DKRUHSAD",    
     # Add more as needed
 }
 
@@ -121,13 +115,13 @@ def classify_group(account: Dict[str, Any]) -> str:
     if any("VO" in t for t in tags):
         return "VOLTIC"
     # ENDY
-    elif any("ENDY" in t for t in tags):
+    elif any("EN" in t for t in tags):
         return "ENDY"
     # SCALEDMAIL
-    elif any("SCALED" in t for t in tags):
+    elif any("SM" in t for t in tags):
         return "SCALEDMAIL"
     # CHEAPINBOXES
-    elif any("CHEAP" in t for t in tags):
+    elif any("CI" in t for t in tags):
         return "CHEAPINBOXES"
     else:
         return "DEFAULT"
@@ -204,6 +198,7 @@ def post_slack_grouped(new_rows: List[Dict[str, Any]], total_curr: int, total_pr
         return
     client = WebClient(token=SLACK_BOT_TOKEN)
 
+    # Group rows
     grouped = {}
     for r in new_rows:
         group = classify_group(r)
@@ -216,18 +211,26 @@ def post_slack_grouped(new_rows: List[Dict[str, Any]], total_curr: int, total_pr
             continue
 
         count = len(rows)
-        emails_list = "\n".join([f"- {r['from_email']}" for r in rows])
+        header = f"[{group}] Newly disconnected accounts: {count}"
+        context = f"Current disconnected: {total_curr} | Previously disconnected: {total_prev}"
 
         blocks = [
-            {"type": "header", "text": {"type": "plain_text", "text": f"[{group}] {count} newly disconnected"}},
-            {"type": "section", "text": {"type": "mrkdwn", "text": emails_list}},
-            {"type": "context", "elements": [
-                {"type": "mrkdwn", "text": f"Current disconnected: {total_curr} | Previously: {total_prev}"}
-            ]}
+            {"type": "header", "text": {"type": "plain_text", "text": header}},
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": context}]},
         ]
 
+        if count <= 20:
+            for r in rows:
+                line = f"*{r['from_email']}* (id {r['email_account_id']}, {r['account_type']})"
+                tag_str = ", ".join(r["tags"]) if r["tags"] else "no tags"
+                blocks.extend([
+                    {"type": "section", "text": {"type": "mrkdwn", "text": line}},
+                    {"type": "context", "elements": [{"type": "mrkdwn", "text": f"{r['from_name'] or 'Unnamed'} | tags: {tag_str}"}]},
+                    {"type": "divider"},
+                ])
+
         try:
-            client.chat_postMessage(channel=channel_id, blocks=blocks, text=f"{group} new disconnections")
+            client.chat_postMessage(channel=channel_id, blocks=blocks, text=header)
             logging.info(f"Posted {count} new disconnects to {group} ({channel_id})")
         except SlackApiError as e:
             logging.error(f"Slack post failed for {group}: {e}")
