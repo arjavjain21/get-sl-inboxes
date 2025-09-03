@@ -18,7 +18,6 @@ load_dotenv()
 SMARTLEAD_BEARER = os.getenv("SMARTLEAD_BEARER_TOKEN", "").strip()
 SUPABASE_DSN = os.getenv("SUPABASE_DSN", "").strip()
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
-SLACK_CHANNEL_ID = os.getenv("SLACK_CHANNEL_ID", "").strip()
 SMARTLEAD_BASE = os.getenv("SMARTLEAD_BASE", "https://server.smartlead.ai").rstrip("/")
 
 TABLE = "public.disconnected_accounts_duplicate"
@@ -63,11 +62,13 @@ def fetch_disconnected(session: requests.Session) -> List[Dict[str, Any]]:
     return out
 
 def normalize(item: Dict[str, Any]) -> Dict[str, Any]:
+    # Collect tags into a clean CSV string
     tags = []
     for m in (item.get("email_account_tag_mappings") or []):
         t = m.get("tag") or {}
         if t.get("name"):
             tags.append(t["name"])
+    tags_str = ",".join(tags)
 
     # Determine disconnection type
     smtp_ok = item.get("is_smtp_success", True)
@@ -83,54 +84,44 @@ def normalize(item: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "email_account_id": int(item["id"]),
-        "account_id": int(item["id"]),  # mirror to satisfy NOT NULL
+        "account_id": int(item["id"]),
         "from_email": item.get("from_email") or "",
         "from_name": item.get("from_name") or "",
         "account_type": item.get("type") or "",
-        "tags": ",".join(tags),  # store as comma-separated string
+        "tags": tags_str,
         "disconnection_type": disconnection_type,
         "payload": item,
     }
 
-
 # ===================== GROUP CONFIG =====================
-# Map group names to Slack channel IDs
 CHANNEL_MAP = {
     "VOLTIC": "C0943S4LSGJ",
     "ENDY": "C092TPDUW4A",
     "SCALEDMAIL": "C07TWN63F4P",
     "CHEAPINBOXES": "C092677AKS4",
     "WINNR": "C093HJE30R1",
-    "DEFAULT": "C09DKRUHSAD",    
-    # Add more as needed
+    "DEFAULT": "C09DKRUHSAD",
 }
 
 def classify_group(account: Dict[str, Any]) -> str:
     """
-    Classify account into groups based on tags (stored as comma-separated string).
-    If a tag *contains* a keyword, map it to the group.
+    Classify account into groups based on tags (CSV string).
     """
     raw_tags = account.get("tags") or ""
     tags = [t.strip().upper() for t in raw_tags.split(",") if t.strip()]
 
-    # VOLTIC
     if any("VO" in t for t in tags):
         return "VOLTIC"
-    # ENDY
     elif any("EN" in t for t in tags):
         return "ENDY"
-    # SCALEDMAIL
     elif any("SM" in t for t in tags):
         return "SCALEDMAIL"
-    # CHEAPINBOXES
     elif any("CI" in t for t in tags):
         return "CHEAPINBOXES"
-    # WINNR
     elif any("WI" in t for t in tags):
         return "WINNR"
     else:
         return "DEFAULT"
-
 
 # ============ DB LOGIC ============
 def load_prev_ids() -> Set[int]:
@@ -185,7 +176,6 @@ def upsert_current(rows: List[Dict[str, Any]]):
         conn.commit()
     logging.info(f"Upserted {len(rows)} rows in bulk")
 
-
 def mark_reconnected(prev_ids: Set[int], curr_ids: Set[int]):
     diff = list(prev_ids - curr_ids)
     if not diff:
@@ -202,7 +192,6 @@ def post_slack_grouped(new_rows: List[Dict[str, Any]], total_curr: int, total_pr
         return
     client = WebClient(token=SLACK_BOT_TOKEN)
 
-    # Group rows
     grouped = {}
     for r in new_rows:
         group = classify_group(r)
@@ -216,30 +205,28 @@ def post_slack_grouped(new_rows: List[Dict[str, Any]], total_curr: int, total_pr
 
         count = len(rows)
         header = f"[{group}] Newly disconnected accounts: {count}"
-        context = f"Current disconnected: {total_curr} | Previously disconnected: {total_prev}"
+        context = f"Current disconnected: {total_curr} | Previously: {total_prev}"
 
+        # Build Slack blocks
         blocks = [
             {"type": "header", "text": {"type": "plain_text", "text": header}},
             {"type": "context", "elements": [{"type": "mrkdwn", "text": context}]},
         ]
 
-        if count <= 20:
-            for r in rows:
-                line = f"*{r['from_email']}* (id {r['email_account_id']}, {r['account_type']})"
-                tag_str = ", ".join(r["tags"]) if r["tags"] else "no tags"
-                blocks.extend([
-                    {"type": "section", "text": {"type": "mrkdwn", "text": line}},
-                    {"type": "context", "elements": [{"type": "mrkdwn", "text": f"{r['from_name'] or 'Unnamed'} | tags: {tag_str}"}]},
-                    {"type": "divider"},
-                ])
+        for r in rows:
+            tags_display = r["tags"] if r["tags"] else "no tags"
+            line = f"- *{r['from_email']}* (id {r['email_account_id']}, {r['account_type']}, {r['disconnection_type']})"
+            blocks.extend([
+                {"type": "section", "text": {"type": "mrkdwn", "text": line}},
+                {"type": "context", "elements": [{"type": "mrkdwn", "text": f"{r['from_name'] or 'Unnamed'} | tags: {tags_display}"}]},
+                {"type": "divider"},
+            ])
 
         try:
             client.chat_postMessage(channel=channel_id, blocks=blocks, text=header)
             logging.info(f"Posted {count} new disconnects to {group} ({channel_id})")
         except SlackApiError as e:
             logging.error(f"Slack post failed for {group}: {e}")
-
-
 
 # ============ MAIN ============
 def main():
