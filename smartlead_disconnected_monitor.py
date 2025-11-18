@@ -100,6 +100,8 @@ CHANNEL_MAP = {
     "SCALEDMAIL": "C07TWN63F4P",
     "CHEAPINBOXES": "C092677AKS4",
     "WINNR": "C093HJE30R1",
+    "INBOXKIT": "C09EF1HCH61",
+    "PEEKER": "C09Q8HD6C75",
     "DEFAULT": "C09DKRUHSAD",
 }
 
@@ -110,16 +112,20 @@ def classify_group(account: Dict[str, Any]) -> str:
     raw_tags = account.get("tags") or ""
     tags = [t.strip().upper() for t in raw_tags.split(",") if t.strip()]
 
-    if any("VO" in t for t in tags):
+    if any("00VO" in t for t in tags):
         return "VOLTIC"
-    elif any("EN" in t for t in tags):
+    elif any("00EN" in t for t in tags):
         return "ENDY"
-    elif any("SM" in t for t in tags):
+    elif any("00SM" in t for t in tags):
         return "SCALEDMAIL"
-    elif any("CI" in t for t in tags):
+    elif any("00CI" in t for t in tags):
         return "CHEAPINBOXES"
-    elif any("WI" in t for t in tags):
+    elif any("00WI" in t for t in tags):
         return "WINNR"
+    elif any("00IKR" in t for t in tags):
+        return "INBOXKIT"
+    elif any("00PK" in t for t in tags):
+        return "PEEKER"
     else:
         return "DEFAULT"
 
